@@ -1,0 +1,13 @@
+# Ignore Python cache folders
+__pycache__/
+*.pyc
+
+# Ignore local virtual environments (if you use them)
+venv/
+.venv/
+env/
+
+# Ignore local system clutter
+.DS_Store
+Thumbs.db
+.ipynb_checkpoints/
