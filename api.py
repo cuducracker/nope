@@ -30,7 +30,12 @@ def process_file_to_df(uploaded_file: UploadFile):
         if uploaded_file.filename.endswith('.xlsx'):
             df = pd.read_excel(io.BytesIO(contents), engine='openpyxl')
         else:
-            df = pd.read_csv(io.BytesIO(contents), sep=None, engine='python')
+            # FIX: Force the lightning-fast 'c' engine and default to standard comma delimiter.
+            # We use utf-8 with fallback to latin-1 to avoid decoding freezes.
+            try:
+                df = pd.read_csv(io.BytesIO(contents), sep=',', engine='c', encoding='utf-8')
+            except Exception:
+                df = pd.read_csv(io.BytesIO(contents), sep=',', engine='c', encoding='latin-1')
         
         # Format Headers & Elements cleanly
         df.columns = [clean_string(c) for c in df.columns]
@@ -61,21 +66,26 @@ def process_file_to_df(uploaded_file: UploadFile):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"File Processing Failure: {str(e)}")
 
+
 def build_summary_table(df_target):
     if df_target.empty: return []
-    stats = df_target.groupby('Gram_Panchayat').agg(
+    
+    # FIX: Group by both SubDistrict and Gram_Panchayat to carry the link to the frontend
+    stats = df_target.groupby(['SubDistrict', 'Gram_Panchayat']).agg(
         Total_Applicants=('Applicant_Name', 'count'),
         Aadhaar_Seeded=('Aadhaar_Status', lambda x: (x == 'Yes').sum())
     ).reset_index()
     stats['Aadhaar_Seeding_Pct'] = ((stats['Aadhaar_Seeded'] / stats['Total_Applicants']) * 100).round(2)
     
-    # Calculate row totals injection cleanly
+    records = stats.to_dict(orient='records')
+    
+    # Calculate row totals safely
     total_app = int(stats['Total_Applicants'].sum())
     total_seed = int(stats['Aadhaar_Seeded'].sum())
     total_pct = round((total_seed / total_app * 100), 2) if total_app > 0 else 0
     
-    records = stats.to_dict(orient='records')
     records.append({
+        "SubDistrict": "TOTAL",
         "Gram_Panchayat": "TOTAL",
         "Total_Applicants": total_app,
         "Aadhaar_Seeded": total_seed,
