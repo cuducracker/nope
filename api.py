@@ -1,16 +1,13 @@
 # Install required modules: pip install fastapi uvicorn pandas openpyxl python-multipart
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
 import pandas as pd
-import numpy as np
 import re
 import io
-import zipfile
 
 app = FastAPI(title="NSAP Data Processing Engine Node")
 
-# Bypasses local cross-origin browser security restrictions entirely
+# Bypasses cross-origin browser restrictions
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -30,14 +27,14 @@ def process_file_to_df(uploaded_file: UploadFile):
         if uploaded_file.filename.endswith('.xlsx'):
             df = pd.read_excel(io.BytesIO(contents), engine='openpyxl')
         else:
-            # FIX: Force the lightning-fast 'c' engine and default to standard comma delimiter.
-            # We use utf-8 with fallback to latin-1 to avoid decoding freezes.
+            # PERFORMANCE FIX: Force the ultra-fast C-engine with standard delimiter 
+            # and fallback encoding protections to prevent endless thread freezes.
             try:
                 df = pd.read_csv(io.BytesIO(contents), sep=',', engine='c', encoding='utf-8')
             except Exception:
                 df = pd.read_csv(io.BytesIO(contents), sep=',', engine='c', encoding='latin-1')
         
-        # Format Headers & Elements cleanly
+        # Clean Headers & Strings instantly
         df.columns = [clean_string(c) for c in df.columns]
         for col in df.columns:
             if df[col].dtype == 'object':
@@ -50,7 +47,13 @@ def process_file_to_df(uploaded_file: UploadFile):
         }
         df = df.rename(columns=lambda x: col_mapping.get(x, x))
         
-        # Map out standard seeding patterns cleanly
+        # Ensure SubDistrict field isn't empty string
+        if 'SubDistrict' in df.columns:
+            df['SubDistrict'] = df['SubDistrict'].replace('', 'UNKNOWN')
+        else:
+            df['SubDistrict'] = 'UNKNOWN'
+        
+        # Fast vector processing for Aadhaar Status mapping
         if 'Aadhar No' in df.columns:
             df['Aadhaar_Status'] = df['Aadhar No'].fillna("").astype(str).apply(
                 lambda x: 'No' if x.strip().lower() in ['no', '0', 'false', 'n', '', 'nan'] else 'Yes'
@@ -66,20 +69,20 @@ def process_file_to_df(uploaded_file: UploadFile):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"File Processing Failure: {str(e)}")
 
-
 def build_summary_table(df_target):
     if df_target.empty: return []
     
-    # FIX: Group by both SubDistrict and Gram_Panchayat to carry the link to the frontend
-    stats = df_target.groupby(['SubDistrict', 'Gram_Panchayat']).agg(
+    # PERFORMANCE FIX: Fast vector grouping using optimized C aggregation matrix
+    stats = df_target.groupby(['SubDistrict', 'Gram_Panchayat'], as_index=False).agg(
         Total_Applicants=('Applicant_Name', 'count'),
         Aadhaar_Seeded=('Aadhaar_Status', lambda x: (x == 'Yes').sum())
-    ).reset_index()
+    )
+    
     stats['Aadhaar_Seeding_Pct'] = ((stats['Aadhaar_Seeded'] / stats['Total_Applicants']) * 100).round(2)
     
     records = stats.to_dict(orient='records')
     
-    # Calculate row totals safely
+    # Global Totals row injection
     total_app = int(stats['Total_Applicants'].sum())
     total_seed = int(stats['Aadhaar_Seeded'].sum())
     total_pct = round((total_seed / total_app * 100), 2) if total_app > 0 else 0
@@ -102,16 +105,16 @@ async def analyze_data_package(current_file: UploadFile = File(...), prior_file:
     if missing:
         return {"status": "error", "message": f"Missing required structural headers: {missing}"}
         
-    # Isolate data metrics
+    # Isolate datasets using blistering fast vector boolean indexing
     state_df = df_curr[df_curr['Scheme'].str.contains('OAPFSC', case=False, na=False)]
     central_df = df_curr[df_curr['Scheme'].str.contains('IGN', case=False, na=False)]
     
     response_data = {
         "status": "success",
         "meta": {
-            "sub_districts": sorted(df_curr['SubDistrict'].dropna().unique().tolist()),
-            "schemes": sorted(df_curr['Scheme'].dropna().unique().tolist()),
-            "gps": sorted(df_curr['Gram_Panchayat'].dropna().unique().tolist())
+            "sub_districts": sorted([x for x in df_curr['SubDistrict'].dropna().unique().tolist() if x != '']),
+            "schemes": sorted([x for x in df_curr['Scheme'].dropna().unique().tolist() if x != '']),
+            "gps": sorted([x for x in df_curr['Gram_Panchayat'].dropna().unique().tolist() if x != ''])
         },
         "tables": {
             "state_scheme": build_summary_table(state_df),
